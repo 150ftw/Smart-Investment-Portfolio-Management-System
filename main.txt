@@ -1,0 +1,101 @@
+import streamlit as st
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import plotly.express as px
+
+st.set_page_config(page_title="Smart Portfolio Planner", layout="wide")
+st.title("📈 Smart Portfolio PlannerE 🇮🇳")
+
+# Sidebar Inputs
+budget = st.sidebar.number_input("Investment Amount (₹)", value=100000, step=1000, min_value=1000)
+risk_pref = st.sidebar.selectbox("Risk Preference", options=["low", "medium", "high"])
+
+# Stock Universe
+stocks = {
+    "RELIANCE.NS": "Reliance Industries",
+    "TCS.NS": "Tata Consultancy Services",
+    "INFY.NS": "Infosys",
+    "HDFCBANK.NS": "HDFC Bank",
+    "ICICIBANK.NS": "ICICI Bank",
+    "LT.NS": "Larsen & Toubro",
+    "SBIN.NS": "State Bank of India",
+    "HINDUNILVR.NS": "Hindustan Unilever",
+    "BHARTIARTL.NS": "Bharti Airtel",
+    "MARUTI.NS": "Maruti Suzuki"
+}
+
+# Fetch Price Data
+data = yf.download(list(stocks.keys()), period="1mo", interval="1d")["Close"]
+latest_prices = data.iloc[-1]
+returns = data.pct_change().mean() * 100  # Average daily return %
+
+# Risk adjustment
+risk_factor = {"low": 0.5, "medium": 1.0, "high": 1.5}[risk_pref]
+adjusted_returns = returns * risk_factor
+
+# Prepare list for knapsack: (ticker, name, price, adj_return, ratio)
+items = []
+for ticker in stocks.keys():
+    price = latest_prices[ticker]
+    ret = adjusted_returns[ticker]
+    # Avoid division by zero
+    ratio = ret / price if price > 0 else 0
+    items.append((ticker, stocks[ticker], price, ret, ratio))
+
+# Sort descending by return to price ratio
+items.sort(key=lambda x: x[4], reverse=True)
+
+# Fractional knapsack  
+remaining_budget = budget
+portfolio = []
+
+for ticker, name, price, ret, ratio in items:
+    if price <= 0 or remaining_budget <= 0:
+        continue
+    fraction = min(1.0, remaining_budget / price)  # buy fraction fitting budget
+    cost = fraction * price
+    exp_return = fraction * ret
+    portfolio.append((ticker, name, price, fraction, cost, exp_return))
+    remaining_budget -= cost
+
+# Normalize quantities to spend full budget exactly, if budget used < budget input
+total_cost = sum(x[4] for x in portfolio)
+if total_cost > 0:
+    scale = budget / total_cost
+    portfolio_scaled = []
+    for ticker, name, price, fraction, cost, exp_return in portfolio:
+        fraction_scaled = fraction * scale
+        cost_scaled = fraction_scaled * price
+        exp_return_scaled = exp_return * scale
+        portfolio_scaled.append((ticker, name, price, fraction_scaled, cost_scaled, exp_return_scaled))
+    portfolio = portfolio_scaled
+
+# Dataframe
+df = pd.DataFrame(portfolio, columns=["Ticker", "Stock", "Unit Price (₹)", "Fraction", "Cost (₹)", "Expected Return (%)"])
+df["Fraction"] = df["Fraction"].round(4)
+df["Cost (₹)"] = df["Cost (₹)"].round(2)
+df["Expected Return (%)"] = df["Expected Return (%)"].round(2)
+
+st.subheader("Optimal Fractional Portfolio Allocation")
+st.dataframe(df[["Stock", "Unit Price (₹)", "Fraction", "Cost (₹)", "Expected Return (%)"]])
+st.write(f"Total Invested: ₹{df['Cost (₹)'].sum():,.2f} / Budget: ₹{budget:,}")
+st.write(f"Estimated Portfolio Return: {df['Expected Return (%)'].sum():.2f} %")
+
+# Bar plot weighted returns
+fig1, ax1 = plt.subplots(figsize=(8, 6))
+ax1.bar(df["Stock"], df["Expected Return (%)"] * df["Fraction"], color="skyblue")
+ax1.set_xlabel("Stocks")
+ax1.set_ylabel("Weighted Expected Return (%)")
+ax1.set_title("📊 Expected Returns Weighted by Fractional Allocation")
+plt.xticks(rotation=45)
+st.pyplot(fig1)
+
+# Pie chart investment distro
+fig2 = px.pie(df, values="Cost (₹)", names="Stock",
+              title="💰 Portfolio Investment Distribution",
+              color_discrete_sequence=px.colors.sequential.RdBu)
+st.plotly_chart(fig2)
+
+st.markdown("Programmed by Shivam Sharma, Gaurav Mehra, Avikam Rana and Ansh Tripathi")
